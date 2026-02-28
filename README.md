@@ -1,3 +1,17 @@
+# Gost Panel
+
+<div align="center">
+
+**现代化 Gost v3 端口转发管理面板**
+
+[![License](https://img.shields.io/github/license/code-gopher/gostPanel)](./LICENSE)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
+[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8.svg)](https://golang.org/)
+
+</div>
+
+
+---
 # 推广 🚀 高速 Hysteria2 接入服务 | 极致性价比
 
 基于最新的 **Hysteria2 (Hy2)** 协议构建，专为开发者、科研人员及跨境电商优化。晚高峰不降速，4K 视频秒开。
@@ -15,18 +29,7 @@
 **官方入口地址**（手动去掉“去”字或直接复制）：
 
 > **http://aip.acgf.vip:15432**
-
-# Gost Panel
-
-<div align="center">
-
-**现代化 Gost v3 端口转发管理面板**
-
-[![License](https://img.shields.io/github/license/code-gopher/gostPanel)](./LICENSE)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
-[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8.svg)](https://golang.org/)
-
-</div>
+---
 
 ---
 
