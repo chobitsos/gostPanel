@@ -496,7 +496,6 @@ func BuildLocalUDPForwardService(name string, listenPort int, targets []string) 
 		Listener: &ListenerConfig{
 			Type: "udp",
 			Metadata: map[string]any{
-				"keepAlive": true,
 				"keepalive": "true",
 			},
 		},
