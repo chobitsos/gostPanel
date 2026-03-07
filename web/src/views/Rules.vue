@@ -20,6 +20,7 @@
             <el-option v-for="node in nodeList" :key="node.id" :label="node.name" :value="node.id" />
           </el-select>
           <el-select v-model="searchType" placeholder="规则类型" clearable style="width: 140px" @change="handleSearch">
+            <el-option label="本地端口转发" value="local_forward" />
             <el-option label="端口转发" value="forward" />
             <el-option label="隧道转发" value="tunnel" />
           </el-select>
@@ -43,8 +44,8 @@
         <el-table-column prop="name" label="规则名" min-width="130" align="center" show-overflow-tooltip />
         <el-table-column label="类型" width="100" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.type === 'tunnel' ? 'warning' : 'primary'" size="small">
-              {{ row.type === 'tunnel' ? '隧道转发' : '端口转发' }}
+            <el-tag :type="row.type === 'tunnel' ? 'warning' : (row.type === 'local_forward' ? 'success' : 'primary')" size="small">
+              {{ row.type === 'tunnel' ? '隧道转发' : (row.type === 'local_forward' ? '本地端口转发' : '端口转发') }}
             </el-tag>
           </template>
         </el-table-column>
@@ -144,13 +145,14 @@
         </el-form-item>
         <el-form-item label="规则类型" prop="type">
           <el-select v-model="form.type" :disabled="isEdit" @change="handleTypeChange" style="width: 100%">
+            <el-option label="本地端口转发" value="local_forward" />
             <el-option label="端口转发" value="forward" />
             <el-option label="隧道转发" value="tunnel" />
           </el-select>
           <div class="form-hint">端口转发：选择节点直接转发 | 隧道转发：选择隧道通过链路转发</div>
         </el-form-item>
         <!-- 端口转发：选择入口节点 -->
-        <el-form-item v-if="form.type === 'forward'" label="入口节点" prop="node_id">
+        <el-form-item v-if="form.type === 'forward' || form.type === 'local_forward'" label="入口节点" prop="node_id">
           <el-select v-model="form.node_id" placeholder="请选择入口节点" style="width: 100%" :disabled="isEdit">
             <el-option v-for="node in nodeList" :key="node.id" :label="node.name" :value="node.id" />
           </el-select>
@@ -174,6 +176,7 @@
               <el-select v-model="form.protocol" placeholder="选择协议" style="width: 100%">
                 <el-option label="TCP" value="tcp" />
                 <el-option label="UDP" value="udp" />
+                <el-option v-if="form.type === 'local_forward'" label="TCP+UDP" value="tcp+udp" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -186,11 +189,14 @@
         <el-row :gutter="20">
           <el-col :span="24" :sm="12">
             <el-form-item label="负载均衡" prop="strategy">
-               <el-select v-model="form.strategy" placeholder="默认为轮询">
-                  <el-option label="轮询" value="round"/>
-                  <el-option label="随机" value="rand"/>
-                  <el-option label="先进先出" value="fifo"/>
-                  <el-option label="哈希" value="hash"/>
+               <el-select v-model="form.strategy" :disabled="form.type === 'local_forward'" placeholder="默认为轮询">
+                  <el-option v-if="form.type === 'local_forward'" label="无" value="" />
+                  <template v-else>
+                    <el-option label="轮询" value="round"/>
+                    <el-option label="随机" value="rand"/>
+                    <el-option label="先进先出" value="fifo"/>
+                    <el-option label="哈希" value="hash"/>
+                  </template>
                </el-select>
             </el-form-item>
           </el-col>
@@ -297,20 +303,20 @@ const importJsonData = ref('')
 const importLoading = ref(false)
 
 const form = reactive({
-  type: 'forward',
+  type: 'local_forward',
   node_id: '',
   tunnel_id: null,
   name: '',
-  protocol: 'tcp',
+  protocol: 'tcp+udp',
   listen_port: 0,
   targetList: [{ address: '' }],
-  strategy: 'round',
+  strategy: '',
   remark: ''
 })
 
 // 动态验证规则
 const validateEntry = (rule, value, callback) => {
-  if (form.type === 'forward' && !form.node_id) {
+  if ((form.type === 'forward' || form.type === 'local_forward') && !form.node_id) {
     callback(new Error('请选择入口节点'))
   } else if (form.type === 'tunnel' && !form.tunnel_id) {
     callback(new Error('请选择隧道'))
@@ -408,26 +414,26 @@ const openDialog = (row = null) => {
     }
 
     Object.assign(form, {
-      type: row.type || 'forward',
+      type: row.type || 'local_forward',
       node_id: row.node_id,
       tunnel_id: row.tunnel_id || null,
       name: row.name,
-      protocol: row.protocol,
+      protocol: row.protocol || ((row.type || 'local_forward') === 'local_forward' ? 'tcp+udp' : 'tcp'),
       listen_port: row.listen_port,
       targetList: tList.length > 0 ? tList : [{ address: '' }],
-      strategy: row.strategy || 'round',
+      strategy: (row.type || 'local_forward') === 'local_forward' ? '' : (row.strategy || 'round'),
       remark: row.remark || ''
     })
   } else {
     Object.assign(form, {
-      type: 'forward',
+      type: 'local_forward',
       node_id: '',
       tunnel_id: null,
       name: '',
-      protocol: 'tcp',
+      protocol: 'tcp+udp',
       listen_port: 8000,
       targetList: [{ address: '' }],
-      strategy: 'round',
+      strategy: '',
       remark: ''
     })
   }
@@ -449,13 +455,13 @@ const handleSubmit = async () => {
       
       const submitData = {
         type: form.type,
-        node_id: form.type === 'forward' ? form.node_id : null,
+        node_id: (form.type === 'forward' || form.type === 'local_forward') ? form.node_id : null,
         tunnel_id: form.type === 'tunnel' ? form.tunnel_id : null,
         name: form.name,
         protocol: form.protocol,
         listen_port: form.listen_port,
         targets: targets,
-        strategy: form.strategy,
+        strategy: form.type === 'local_forward' ? '' : form.strategy,
         remark: form.remark
       }
       
@@ -528,14 +534,14 @@ const handleCopy = (row) => {
   }
 
   Object.assign(form, {
-    type: row.type || 'forward',
+    type: row.type || 'local_forward',
     node_id: row.node_id,
     tunnel_id: row.tunnel_id || null,
     name: row.name + '-copy',
-    protocol: row.protocol,
+    protocol: row.protocol || ((row.type || 'local_forward') === 'local_forward' ? 'tcp+udp' : 'tcp'),
     listen_port: row.listen_port + 1, // 端口自动+1
     targetList: tList.length > 0 ? tList : [{ address: '' }],
-    strategy: row.strategy || 'round',
+    strategy: (row.type || 'local_forward') === 'local_forward' ? '' : (row.strategy || 'round'),
     remark: row.remark || ''
   })
   
@@ -622,13 +628,13 @@ const handleImport = async () => {
     try {
       await createRule({
         name: rule.name || '导入规则',
-        type: rule.type || 'forward',
+        type: rule.type || 'local_forward',
         node_id: rule.node_id,
         tunnel_id: rule.tunnel_id,
-        protocol: rule.protocol || 'tcp',
+        protocol: rule.protocol || ((rule.type || 'local_forward') === 'local_forward' ? 'tcp+udp' : 'tcp'),
         listen_port: rule.listen_port || 0,
         targets: rule.targets || [],
-        strategy: rule.strategy || 'round',
+        strategy: ((rule.type || 'local_forward') === 'local_forward') ? '' : (rule.strategy || 'round'),
         remark: rule.remark || ''
       })
       successCount++
@@ -681,10 +687,22 @@ const removeTarget = (index) => {
 
 // 切换规则类型时清空另一侧的选择
 const handleTypeChange = (val) => {
-  if (val === 'forward') {
-    form.tunnel_id = null
-  } else {
+  if (val === 'tunnel') {
     form.node_id = ''
+  } else {
+    form.tunnel_id = null
+  }
+
+  if (val === 'local_forward') {
+    form.protocol = 'tcp+udp'
+    form.strategy = ''
+  } else {
+    if (form.protocol === 'tcp+udp') {
+      form.protocol = 'tcp'
+    }
+    if (!form.strategy) {
+      form.strategy = 'round'
+    }
   }
 }
 </script>

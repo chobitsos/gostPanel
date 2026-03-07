@@ -6,71 +6,66 @@ import (
 	"gorm.io/gorm"
 )
 
-// RuleStatus 规则状态
+// RuleStatus is the runtime status of a rule.
 type RuleStatus string
 
 const (
-	RuleStatusRunning RuleStatus = "running" // 运行中
-	RuleStatusStopped RuleStatus = "stopped" // 已停止
-	RuleStatusError   RuleStatus = "error"   // 错误
+	RuleStatusRunning RuleStatus = "running"
+	RuleStatusStopped RuleStatus = "stopped"
+	RuleStatusError   RuleStatus = "error"
 )
 
-// RuleProtocol 规则协议
+// RuleProtocol is the protocol for a rule.
 type RuleProtocol string
 
 const (
-	RuleProtocolTCP RuleProtocol = "tcp" // TCP 协议
-	RuleProtocolUDP RuleProtocol = "udp" // UDP 协议
+	RuleProtocolTCP    RuleProtocol = "tcp"
+	RuleProtocolUDP    RuleProtocol = "udp"
+	RuleProtocolTCPUDP RuleProtocol = "tcp+udp"
 )
 
-// RuleType 规则类型
+// RuleType is the forwarding mode of a rule.
 type RuleType string
 
 const (
-	RuleTypeForward RuleType = "forward" // 端口转发（直连目标）
-	RuleTypeTunnel  RuleType = "tunnel"  // 隧道转发（通过隧道链路）
+	RuleTypeForward      RuleType = "forward"
+	RuleTypeTunnel       RuleType = "tunnel"
+	RuleTypeLocalForward RuleType = "local_forward"
 )
 
-// GostRule 转发规则模型
-// 入口选择：NodeID 或 TunnelID 二选一
-// - 端口转发 (forward)：选择 NodeID，直接在该节点上创建转发服务
-// - 隧道转发 (tunnel)：选择 TunnelID，在隧道的入口节点上创建转发服务，使用隧道的 Chain
+// GostRule is the forwarding rule model.
 type GostRule struct {
 	ID         uint         `gorm:"primaryKey" json:"id"`
-	NodeID     *uint        `gorm:"index" json:"node_id"`                         // 入口节点 ID（端口转发时使用）
-	Name       string       `gorm:"size:100;not null" json:"name"`                // 规则名称
-	Type       RuleType     `gorm:"size:20;not null;default:forward" json:"type"` // 规则类型
-	TunnelID   *uint        `gorm:"index" json:"tunnel_id"`                       // 隧道 ID（隧道转发时使用）
-	Protocol   RuleProtocol `gorm:"size:10;not null;default:tcp" json:"protocol"` // 协议
-	ListenPort int          `gorm:"not null" json:"listen_port"`                  // 监听端口
+	NodeID     *uint        `gorm:"index" json:"node_id"`
+	Name       string       `gorm:"size:100;not null" json:"name"`
+	Type       RuleType     `gorm:"size:20;not null;default:forward" json:"type"`
+	TunnelID   *uint        `gorm:"index" json:"tunnel_id"`
+	Protocol   RuleProtocol `gorm:"size:10;not null;default:tcp" json:"protocol"`
+	ListenPort int          `gorm:"not null" json:"listen_port"`
 
-	Targets   []string   `gorm:"type:json;serializer:json" json:"targets"` // 多目标列表 (host:port)
-	Strategy  string     `gorm:"size:20;default:round" json:"strategy"`    // 负载均衡策略 (round, random, fifo)
-	EnableTLS bool       `gorm:"default:false" json:"enable_tls"`          // 是否启用 TLS
-	Status    RuleStatus `gorm:"size:20;default:stopped" json:"status"`    // 状态
-	ServiceID string     `gorm:"size:100" json:"service_id"`               // Gost 服务 ID
+	Targets   []string   `gorm:"type:json;serializer:json" json:"targets"`
+	Strategy  string     `gorm:"size:20;default:round" json:"strategy"`
+	EnableTLS bool       `gorm:"default:false" json:"enable_tls"`
+	Status    RuleStatus `gorm:"size:20;default:stopped" json:"status"`
+	ServiceID string     `gorm:"size:100" json:"service_id"`
 
-	// 流量监控配置
-	ObserverID string `gorm:"size:100" json:"observer_id"` // 观察器 ID
+	ObserverID string `gorm:"size:100" json:"observer_id"`
 
-	// 流量统计 (由观察器更新)
-	InputBytes    int64 `gorm:"default:0" json:"input_bytes"`    // 入站总流量 (bytes)
-	OutputBytes   int64 `gorm:"default:0" json:"output_bytes"`   // 出站总流量 (bytes)
-	TotalBytes    int64 `gorm:"default:0" json:"total_bytes"`    // 总流量 (Input + Output)
-	TotalRequests int64 `gorm:"default:0" json:"total_requests"` // 总请求数
+	InputBytes    int64 `gorm:"default:0" json:"input_bytes"`
+	OutputBytes   int64 `gorm:"default:0" json:"output_bytes"`
+	TotalBytes    int64 `gorm:"default:0" json:"total_bytes"`
+	TotalRequests int64 `gorm:"default:0" json:"total_requests"`
 
-	Remark    string         `gorm:"type:text" json:"remark"` // 备注
+	Remark    string         `gorm:"type:text" json:"remark"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	// 关联 - 入口节点
-	Node *GostNode `gorm:"foreignKey:NodeID" json:"node,omitempty"`
-	// 关联 - 隧道
+	Node   *GostNode   `gorm:"foreignKey:NodeID" json:"node,omitempty"`
 	Tunnel *GostTunnel `gorm:"foreignKey:TunnelID" json:"tunnel,omitempty"`
 }
 
-// TableName 指定表名
+// TableName specifies table name.
 func (GostRule) TableName() string {
 	return "rules"
 }

@@ -89,6 +89,10 @@ func (s *StatsService) GetDashboardStats() (*DashboardStats, error) {
 	if err != nil {
 		return nil, err
 	}
+	localForwardType, err := s.ruleRepo.CountByType(model.RuleTypeLocalForward)
+	if err != nil {
+		return nil, err
+	}
 	tunnelType, err := s.ruleRepo.CountByType(model.RuleTypeTunnel)
 	if err != nil {
 		return nil, err
@@ -97,7 +101,7 @@ func (s *StatsService) GetDashboardStats() (*DashboardStats, error) {
 		Total:       ruleTotal,
 		Running:     ruleRunning,
 		Stopped:     ruleTotal - ruleRunning,
-		ForwardType: forwardType,
+		ForwardType: forwardType + localForwardType,
 		TunnelType:  tunnelType,
 	}
 

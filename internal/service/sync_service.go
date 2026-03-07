@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -140,6 +141,33 @@ func (s *RuleSyncService) syncNodeRules(node model.GostNode) {
 
 // syncRuleStatus 同步规则状态
 func (s *RuleSyncService) syncRuleStatus(r model.GostRule, serviceStates map[string]string) {
+	serviceIDs := splitServiceIDs(r.ServiceID, fmt.Sprintf("rule-%d", r.ID))
+	if len(serviceIDs) > 0 {
+		allRunning := true
+		hasKnownState := false
+		for _, serviceID := range serviceIDs {
+			state, ok := serviceStates[serviceID]
+			if !ok {
+				allRunning = false
+				continue
+			}
+			hasKnownState = true
+			if utils.GostStateToRuleStatus(state) != model.RuleStatusRunning {
+				allRunning = false
+			}
+		}
+
+		newStatus := model.RuleStatusStopped
+		if hasKnownState && allRunning {
+			newStatus = model.RuleStatusRunning
+		}
+		if r.Status != newStatus {
+			logger.Infof("[Sync] rule %d (%s) status changed: %s -> %s (service_ids=%s)", r.ID, r.Name, r.Status, newStatus, strings.Join(serviceIDs, ","))
+			_ = s.ruleRepo.UpdateStatus(r.ID, newStatus)
+		}
+		return
+	}
+
 	serviceID := r.ServiceID
 	if serviceID == "" {
 		serviceID = fmt.Sprintf("rule-%d", r.ID)

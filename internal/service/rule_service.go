@@ -4,6 +4,7 @@ package service
 import (
 	stderrors "errors"
 	"fmt"
+	"strings"
 
 	"gost-panel/internal/dto"
 	"gost-panel/internal/errors"
@@ -47,7 +48,7 @@ func (s *RuleService) Create(req *dto.CreateRuleReq, userID uint, username strin
 	var entryNodeID uint
 
 	// 根据规则类型验证入口
-	if req.Type == string(model.RuleTypeForward) {
+	if req.Type == string(model.RuleTypeForward) || req.Type == string(model.RuleTypeLocalForward) {
 		// 端口转发：需要 NodeID
 		if req.NodeID == nil || *req.NodeID == 0 {
 			return nil, errors.ErrNodeRequired
@@ -80,6 +81,10 @@ func (s *RuleService) Create(req *dto.CreateRuleReq, userID uint, username strin
 		return nil, errors.ErrRuleTypeInvalid
 	}
 
+	if err := s.validateRuleProtocol(model.RuleType(req.Type), model.RuleProtocol(req.Protocol)); err != nil {
+		return nil, err
+	}
+
 	// 检查端口是否已被使用
 	exists, err := s.ruleRepo.ExistsByPort(entryNodeID, req.ListenPort)
 	if err != nil {
@@ -90,6 +95,11 @@ func (s *RuleService) Create(req *dto.CreateRuleReq, userID uint, username strin
 	}
 
 	// 创建规则
+	strategy := req.Strategy
+	if req.Type == string(model.RuleTypeLocalForward) {
+		strategy = ""
+	}
+
 	rule := &model.GostRule{
 		NodeID:     req.NodeID,
 		TunnelID:   req.TunnelID,
@@ -98,7 +108,7 @@ func (s *RuleService) Create(req *dto.CreateRuleReq, userID uint, username strin
 		Protocol:   model.RuleProtocol(req.Protocol),
 		ListenPort: req.ListenPort,
 		Targets:    req.Targets,
-		Strategy:   req.Strategy,
+		Strategy:   strategy,
 		EnableTLS:  req.EnableTLS,
 		Remark:     req.Remark,
 		Status:     model.RuleStatusStopped,
@@ -123,6 +133,20 @@ func (s *RuleService) Create(req *dto.CreateRuleReq, userID uint, username strin
 	return rule, nil
 }
 
+func (s *RuleService) validateRuleProtocol(ruleType model.RuleType, protocol model.RuleProtocol) error {
+	switch protocol {
+	case model.RuleProtocolTCP, model.RuleProtocolUDP:
+		return nil
+	case model.RuleProtocolTCPUDP:
+		if ruleType != model.RuleTypeLocalForward {
+			return errors.ErrBadRequest
+		}
+		return nil
+	default:
+		return errors.ErrBadRequest
+	}
+}
+
 // Update 更新规则（不能修改类型和入口）
 func (s *RuleService) Update(id uint, req *dto.UpdateRuleReq, userID uint, username string, ip, userAgent string) (*model.GostRule, error) {
 	rule, err := s.ruleRepo.FindByID(id)
@@ -138,6 +162,10 @@ func (s *RuleService) Update(id uint, req *dto.UpdateRuleReq, userID uint, usern
 		return nil, errors.ErrRuleRunning
 	}
 
+	if err := s.validateRuleProtocol(rule.Type, model.RuleProtocol(req.Protocol)); err != nil {
+		return nil, err
+	}
+
 	// 获取入口节点 ID（用于端口冲突检查）
 	entryNodeID := s.getEntryNodeID(rule)
 
@@ -150,12 +178,17 @@ func (s *RuleService) Update(id uint, req *dto.UpdateRuleReq, userID uint, usern
 		return nil, errors.ErrRulePortExists
 	}
 
+	strategy := req.Strategy
+	if rule.Type == model.RuleTypeLocalForward {
+		strategy = ""
+	}
+
 	// 更新规则（不修改类型和入口）
 	rule.Name = req.Name
 	rule.Protocol = model.RuleProtocol(req.Protocol)
 	rule.ListenPort = req.ListenPort
 	rule.Targets = req.Targets
-	rule.Strategy = req.Strategy
+	rule.Strategy = strategy
 	rule.EnableTLS = req.EnableTLS
 	rule.Remark = req.Remark
 
@@ -280,18 +313,24 @@ func (s *RuleService) Start(id uint, userID uint, username string, ip, userAgent
 	}
 
 	client := utils.GetGostClient(node)
-	serviceName := fmt.Sprintf("rule-%d", rule.ID)
+	baseServiceName := fmt.Sprintf("rule-%d", rule.ID)
+	var serviceIDs []string
 
 	// 根据规则类型处理
 	if rule.Type == model.RuleTypeTunnel {
-		if err = s.startTunnelRule(rule, client, serviceName); err != nil {
+		serviceIDs, err = s.startTunnelRule(rule, client, baseServiceName)
+		if err != nil {
 			return err
 		}
 	} else {
-		if err = s.startForwardRule(rule, client, serviceName); err != nil {
+		serviceIDs, err = s.startForwardRule(rule, client, baseServiceName)
+		if err != nil {
 			return err
 		}
 	}
+
+	_ = s.ruleRepo.UpdateStatus(rule.ID, model.RuleStatusRunning)
+	_ = s.ruleRepo.UpdateServiceID(rule.ID, strings.Join(serviceIDs, ","))
 
 	s.logService.Record(
 		userID,
@@ -308,36 +347,36 @@ func (s *RuleService) Start(id uint, userID uint, username string, ip, userAgent
 }
 
 // startForwardRule 启动端口转发规则（直连目标）
-func (s *RuleService) startForwardRule(rule *model.GostRule, client *gost.Client, serviceName string) error {
+func (s *RuleService) startForwardRule(rule *model.GostRule, client *gost.Client, serviceName string) ([]string, error) {
 	// 端口转发没有 Chain ID
-	return s.buildAndStartService(client, rule, serviceName, "")
+	return s.buildAndStartServices(client, rule, serviceName, "")
 }
 
 // startTunnelRule 启动隧道转发规则（通过隧道链路）
-func (s *RuleService) startTunnelRule(rule *model.GostRule, client *gost.Client, serviceName string) error {
+func (s *RuleService) startTunnelRule(rule *model.GostRule, client *gost.Client, serviceName string) ([]string, error) {
 	if rule.TunnelID == nil {
-		return errors.ErrTunnelRequired
+		return nil, errors.ErrTunnelRequired
 	}
 
 	// 获取隧道信息
 	tunnel, err := s.tunnelRepo.FindByID(*rule.TunnelID)
 	if err != nil {
-		return errors.ErrTunnelNotFound
+		return nil, errors.ErrTunnelNotFound
 	}
 
 	// 确保隧道已启动
 	if tunnel.Status != model.TunnelStatusRunning {
-		return errors.ErrTunnelNotRunning
+		return nil, errors.ErrTunnelNotRunning
 	}
 
 	// 检查隧道是否有 Chain ID
 	if tunnel.ChainID == "" {
 		_ = s.ruleRepo.UpdateStatus(rule.ID, model.RuleStatusError)
-		return errors.ErrTunnelChainNotFound
+		return nil, errors.ErrTunnelChainNotFound
 	}
 
 	// 使用通用逻辑启动服务，传入 Chain ID
-	return s.buildAndStartService(client, rule, serviceName, tunnel.ChainID)
+	return s.buildAndStartServices(client, rule, serviceName, tunnel.ChainID)
 }
 
 // Stop 停止规则
@@ -369,8 +408,8 @@ func (s *RuleService) Stop(id uint, userID uint, username string, ip, userAgent 
 	client := utils.GetGostClient(node)
 
 	// 删除服务
-	if rule.ServiceID != "" {
-		if err = client.DeleteService(rule.ServiceID); err != nil {
+	for _, serviceID := range splitServiceIDs(rule.ServiceID, fmt.Sprintf("rule-%d", rule.ID)) {
+		if err = client.DeleteService(serviceID); err != nil {
 			logger.Warnf("删除 Gost 服务失败: %v", err)
 		}
 	}
@@ -433,38 +472,84 @@ func (s *RuleService) setupRuleObserver(client *gost.Client, rule *model.GostRul
 }
 
 // buildAndStartService 构建并启动 Gost 服务 (处理通用逻辑)
-func (s *RuleService) buildAndStartService(client *gost.Client, rule *model.GostRule, serviceName string, chainID string) error {
+func (s *RuleService) buildAndStartServices(client *gost.Client, rule *model.GostRule, serviceName string, chainID string) ([]string, error) {
 	targets := rule.Targets
 	strategy := rule.Strategy
 	if strategy == "" || len(targets) == 1 {
 		strategy = "round"
 	}
 
-	var svc *gost.ServiceConfig
-	if rule.Protocol == model.RuleProtocolTCP {
-		svc = gost.BuildTCPForwardService(serviceName, rule.ListenPort, targets, strategy)
-	} else {
-		svc = gost.BuildUDPForwardService(serviceName, rule.ListenPort, targets, strategy)
+	serviceIDs := []string{serviceName}
+	if rule.Type == model.RuleTypeLocalForward && rule.Protocol == model.RuleProtocolTCPUDP {
+		serviceIDs = []string{serviceName + "-tcp", serviceName + "-udp"}
 	}
 
-	// 如果有 Chain ID，则关联（用于隧道转发）
-	if chainID != "" {
-		svc.Handler.Chain = chainID
-	}
+	for _, currentServiceID := range serviceIDs {
+		var svc *gost.ServiceConfig
+		switch rule.Type {
+		case model.RuleTypeLocalForward:
+			switch {
+			case rule.Protocol == model.RuleProtocolTCP:
+				svc = gost.BuildLocalTCPForwardService(currentServiceID, rule.ListenPort, targets)
+			case rule.Protocol == model.RuleProtocolUDP:
+				svc = gost.BuildLocalUDPForwardService(currentServiceID, rule.ListenPort, targets)
+			case rule.Protocol == model.RuleProtocolTCPUDP:
+				if strings.HasSuffix(currentServiceID, "-udp") {
+					svc = gost.BuildLocalUDPForwardService(currentServiceID, rule.ListenPort, targets)
+				} else {
+					svc = gost.BuildLocalTCPForwardService(currentServiceID, rule.ListenPort, targets)
+				}
+			default:
+				return nil, errors.ErrBadRequest
+			}
+		case model.RuleTypeForward, model.RuleTypeTunnel:
+			switch rule.Protocol {
+			case model.RuleProtocolTCP:
+				svc = gost.BuildTCPForwardService(currentServiceID, rule.ListenPort, targets, strategy)
+			case model.RuleProtocolUDP:
+				svc = gost.BuildUDPForwardService(currentServiceID, rule.ListenPort, targets, strategy)
+			default:
+				return nil, errors.ErrBadRequest
+			}
+		default:
+			return nil, errors.ErrRuleTypeInvalid
+		}
 
-	// 配置观察器
-	if err := s.setupRuleObserver(client, rule, svc); err != nil {
-		return err
-	}
+		// 如果有 Chain ID，则关联（用于隧道转发）
+		if chainID != "" {
+			svc.Handler.Chain = chainID
+		}
 
-	if err := client.CreateService(svc); err != nil {
-		_ = s.ruleRepo.UpdateStatus(rule.ID, model.RuleStatusError)
-		return errors.ErrRuleStartFailed
+		// 配置观察器
+		if err := s.setupRuleObserver(client, rule, svc); err != nil {
+			return nil, err
+		}
+
+		if err := client.CreateService(svc); err != nil {
+			_ = s.ruleRepo.UpdateStatus(rule.ID, model.RuleStatusError)
+			return nil, errors.ErrRuleStartFailed
+		}
 	}
 
 	_ = client.SaveConfig()
-	_ = s.ruleRepo.UpdateStatus(rule.ID, model.RuleStatusRunning)
-	_ = s.ruleRepo.UpdateServiceID(rule.ID, serviceName)
+	return serviceIDs, nil
+}
 
-	return nil
+func splitServiceIDs(raw string, fallback string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{fallback}
+	}
+
+	parts := strings.Split(raw, ",")
+	serviceIDs := make([]string, 0, len(parts))
+	for _, part := range parts {
+		id := strings.TrimSpace(part)
+		if id != "" {
+			serviceIDs = append(serviceIDs, id)
+		}
+	}
+	if len(serviceIDs) == 0 {
+		return []string{fallback}
+	}
+	return serviceIDs
 }

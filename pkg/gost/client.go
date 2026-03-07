@@ -452,6 +452,60 @@ func BuildUDPForwardService(name string, listenPort int, targets []string, strat
 	}
 }
 
+// BuildLocalTCPForwardService 构建本地 TCP 端口转发服务配置
+func BuildLocalTCPForwardService(name string, listenPort int, targets []string) *ServiceConfig {
+	nodes := make([]*ForwarderNode, 0, len(targets))
+	for i, target := range targets {
+		nodes = append(nodes, &ForwarderNode{
+			Name: fmt.Sprintf("target-%d", i),
+			Addr: target,
+		})
+	}
+
+	return &ServiceConfig{
+		Name: name,
+		Addr: fmt.Sprintf(":%d", listenPort),
+		Handler: &HandlerConfig{
+			Type: "tcp",
+		},
+		Listener: &ListenerConfig{
+			Type: "tcp",
+		},
+		Forwarder: &ForwarderConfig{
+			Nodes: nodes,
+		},
+	}
+}
+
+// BuildLocalUDPForwardService 构建本地 UDP 端口转发服务配置
+func BuildLocalUDPForwardService(name string, listenPort int, targets []string) *ServiceConfig {
+	nodes := make([]*ForwarderNode, 0, len(targets))
+	for i, target := range targets {
+		nodes = append(nodes, &ForwarderNode{
+			Name: fmt.Sprintf("target-%d", i),
+			Addr: target,
+		})
+	}
+
+	return &ServiceConfig{
+		Name: name,
+		Addr: fmt.Sprintf(":%d", listenPort),
+		Handler: &HandlerConfig{
+			Type: "udp",
+		},
+		Listener: &ListenerConfig{
+			Type: "udp",
+			Metadata: map[string]any{
+				"keepAlive": true,
+				"keepalive": "true",
+			},
+		},
+		Forwarder: &ForwarderConfig{
+			Nodes: nodes,
+		},
+	}
+}
+
 // CreateLimiter 创建限流器 (幂等)
 func (c *Client) CreateLimiter(limiter *LimiterConfig) error {
 	path := fmt.Sprintf("/config/limiters/%s", limiter.Name)

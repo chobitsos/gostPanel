@@ -110,6 +110,9 @@ func parseServiceID(serviceName, prefix string, id *uint) (bool, error) {
 	}
 
 	idStr := strings.TrimPrefix(serviceName, prefix)
+	if idx := strings.Index(idStr, "-"); idx > 0 {
+		idStr = idStr[:idx]
+	}
 	var parsedID uint
 	if _, err := parseUint(idStr, &parsedID); err != nil {
 		return false, err
