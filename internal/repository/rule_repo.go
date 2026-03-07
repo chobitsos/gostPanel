@@ -160,7 +160,10 @@ func (r *RuleRepository) CountByType(ruleType model.RuleType) (int64, error) {
 func (r *RuleRepository) StopByNodeID(nodeID uint) error {
 	return r.DB.Model(&model.GostRule{}).
 		Where("node_id = ? AND status = ?", nodeID, model.RuleStatusRunning).
-		Update("status", model.RuleStatusStopped).Error
+		Updates(map[string]any{
+			"status":      model.RuleStatusStopped,
+			"auto_resume": true,
+		}).Error
 }
 
 // UpdateStats 累加流量统计
@@ -182,5 +185,30 @@ func (r *RuleRepository) StopByTunnelIDs(tunnelIDs []uint) error {
 	}
 	return r.DB.Model(&model.GostRule{}).
 		Where("tunnel_id IN ? AND status = ?", tunnelIDs, model.RuleStatusRunning).
-		Update("status", model.RuleStatusStopped).Error
+		Updates(map[string]any{
+			"status":      model.RuleStatusStopped,
+			"auto_resume": true,
+		}).Error
+}
+
+// FindAutoResumeByNodeID 查找指定节点下需要自动恢复的规则
+func (r *RuleRepository) FindAutoResumeByNodeID(nodeID uint) ([]model.GostRule, error) {
+	var rules []model.GostRule
+	err := r.DB.Where("node_id = ? AND auto_resume = ?", nodeID, true).Find(&rules).Error
+	return rules, err
+}
+
+// FindAutoResumeByTunnelIDs 查找指定隧道下需要自动恢复的规则
+func (r *RuleRepository) FindAutoResumeByTunnelIDs(tunnelIDs []uint) ([]model.GostRule, error) {
+	if len(tunnelIDs) == 0 {
+		return []model.GostRule{}, nil
+	}
+	var rules []model.GostRule
+	err := r.DB.Where("tunnel_id IN ? AND auto_resume = ?", tunnelIDs, true).Find(&rules).Error
+	return rules, err
+}
+
+// UpdateAutoResume 更新规则自动恢复标记
+func (r *RuleRepository) UpdateAutoResume(id uint, autoResume bool) error {
+	return r.UpdateField(&model.GostRule{}, id, "auto_resume", autoResume)
 }

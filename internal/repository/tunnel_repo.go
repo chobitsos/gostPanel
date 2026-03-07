@@ -99,7 +99,10 @@ func (r *TunnelRepository) FindByNodeID(nodeID uint) ([]model.GostTunnel, error)
 func (r *TunnelRepository) StopByNodeID(nodeID uint) error {
 	return r.DB.Model(&model.GostTunnel{}).
 		Where("(entry_node_id = ? OR exit_node_id = ?) AND status = ?", nodeID, nodeID, model.TunnelStatusRunning).
-		Update("status", model.TunnelStatusStopped).Error
+		Updates(map[string]any{
+			"status":      model.TunnelStatusStopped,
+			"auto_resume": true,
+		}).Error
 }
 
 // HasRulesUsingTunnel 检查是否有规则正在使用该隧道
@@ -128,4 +131,17 @@ func (r *TunnelRepository) UpdateServiceInfo(id uint, serviceID, chainID string)
 			"service_id": serviceID,
 			"chain_id":   chainID,
 		}).Error
+}
+
+// FindAutoResumeByNodeID 查找指定节点关联的自动恢复隧道
+func (r *TunnelRepository) FindAutoResumeByNodeID(nodeID uint) ([]model.GostTunnel, error) {
+	var tunnels []model.GostTunnel
+	err := r.DB.Where("(entry_node_id = ? OR exit_node_id = ?) AND auto_resume = ?", nodeID, nodeID, true).
+		Find(&tunnels).Error
+	return tunnels, err
+}
+
+// UpdateAutoResume 更新隧道自动恢复标记
+func (r *TunnelRepository) UpdateAutoResume(id uint, autoResume bool) error {
+	return r.UpdateField(&model.GostTunnel{}, id, "auto_resume", autoResume)
 }

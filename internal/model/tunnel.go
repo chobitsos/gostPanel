@@ -25,6 +25,7 @@ type GostTunnel struct {
 	Protocol    string       `gorm:"size:10;default:tcp" json:"protocol"` // 协议 (tcp/udp/tls/mtls/ws/mws/quic)
 	RelayPort   int          `gorm:"default:8443" json:"relay_port"`      // 出口节点 Relay 服务端口
 	Status      TunnelStatus `gorm:"size:20;default:stopped" json:"status"`
+	AutoResume  bool         `gorm:"default:false" json:"-"`
 
 	// Gost 服务相关 ID（启动时创建）
 	ServiceID string `gorm:"size:100" json:"service_id"` // 出口节点 Relay 服务 ID

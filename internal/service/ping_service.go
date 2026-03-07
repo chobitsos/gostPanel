@@ -18,6 +18,8 @@ type NodeHealthService struct {
 	nodeRepo   *repository.NodeRepository
 	ruleRepo   *repository.RuleRepository
 	tunnelRepo *repository.TunnelRepository
+	ruleSvc    *RuleService
+	tunnelSvc  *TunnelService
 	ticker     *time.Ticker
 	stopChan   chan struct{}
 	wg         sync.WaitGroup
@@ -29,6 +31,8 @@ func NewNodeHealthService(db *gorm.DB) *NodeHealthService {
 		nodeRepo:   repository.NewNodeRepository(db),
 		ruleRepo:   repository.NewRuleRepository(db),
 		tunnelRepo: repository.NewTunnelRepository(db),
+		ruleSvc:    NewRuleService(db),
+		tunnelSvc:  NewTunnelService(db),
 		stopChan:   make(chan struct{}),
 	}
 }
@@ -83,17 +87,21 @@ func (s *NodeHealthService) checkNodes() {
 	for _, node := range nodes {
 		go func(n model.GostNode) {
 			status := s.checkNodeHealth(n)
+			wasOnline := n.Status == model.NodeStatusOnline
 
 			// 状态变更处理
 			if status != n.Status {
 				logger.Infof("节点 %s 状态变更: %s -> %s", n.Name, n.Status, status)
-				if err = s.nodeRepo.UpdateStatus(n.ID, status); err != nil {
+				if err := s.nodeRepo.UpdateStatus(n.ID, status); err != nil {
 					logger.Errorf("更新节点 %s 状态失败: %v", n.Name, err)
 				}
 			}
 
 			if status == model.NodeStatusOnline {
 				logger.Debugf("节点 %s 在线", n.Name)
+				if !wasOnline {
+					s.resumeResourcesForNode(n.ID, n.Name)
+				}
 			} else {
 				// 停止其关联的所有规则和隧道
 				_ = s.ruleRepo.StopByNodeID(n.ID)
@@ -113,6 +121,56 @@ func (s *NodeHealthService) checkNodes() {
 
 			_ = s.nodeRepo.UpdateLastCheck(n.ID)
 		}(node)
+	}
+}
+
+func (s *NodeHealthService) resumeResourcesForNode(nodeID uint, nodeName string) {
+	logger.Infof("节点 %s 已恢复在线，开始自动恢复关联隧道和规则", nodeName)
+
+	tunnelsToResume, err := s.tunnelRepo.FindAutoResumeByNodeID(nodeID)
+	if err != nil {
+		logger.Errorf("查询节点 %s 自动恢复隧道失败: %v", nodeName, err)
+		return
+	}
+	for _, tunnel := range tunnelsToResume {
+		if err := s.tunnelSvc.Start(tunnel.ID, 0, "system", "", "auto-resume"); err != nil {
+			logger.Warnf("自动恢复隧道失败: tunnel_id=%d name=%s err=%v", tunnel.ID, tunnel.Name, err)
+		}
+	}
+
+	relatedTunnels, err := s.tunnelRepo.FindByNodeID(nodeID)
+	if err != nil {
+		logger.Errorf("查询节点 %s 关联隧道失败: %v", nodeName, err)
+		return
+	}
+	tunnelIDs := make([]uint, 0, len(relatedTunnels))
+	for _, tunnel := range relatedTunnels {
+		tunnelIDs = append(tunnelIDs, tunnel.ID)
+	}
+
+	rulesByNode, err := s.ruleRepo.FindAutoResumeByNodeID(nodeID)
+	if err != nil {
+		logger.Errorf("查询节点 %s 自动恢复规则失败: %v", nodeName, err)
+		return
+	}
+	rulesByTunnel, err := s.ruleRepo.FindAutoResumeByTunnelIDs(tunnelIDs)
+	if err != nil {
+		logger.Errorf("查询节点 %s 隧道自动恢复规则失败: %v", nodeName, err)
+		return
+	}
+
+	ruleIDSet := make(map[uint]struct{})
+	for _, rule := range rulesByNode {
+		ruleIDSet[rule.ID] = struct{}{}
+	}
+	for _, rule := range rulesByTunnel {
+		ruleIDSet[rule.ID] = struct{}{}
+	}
+
+	for ruleID := range ruleIDSet {
+		if err := s.ruleSvc.Start(ruleID, 0, "system", "", "auto-resume"); err != nil {
+			logger.Warnf("自动恢复规则失败: rule_id=%d err=%v", ruleID, err)
+		}
 	}
 }
 

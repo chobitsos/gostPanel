@@ -48,6 +48,7 @@ type GostRule struct {
 	EnableTLS bool       `gorm:"default:false" json:"enable_tls"`
 	Status    RuleStatus `gorm:"size:20;default:stopped" json:"status"`
 	ServiceID string     `gorm:"size:100" json:"service_id"`
+	AutoResume bool      `gorm:"default:false" json:"-"`
 
 	ObserverID string `gorm:"size:100" json:"observer_id"`
 

@@ -299,6 +299,9 @@ func (s *RuleService) Start(id uint, userID uint, username string, ip, userAgent
 
 	// 已在运行中则跳过
 	if rule.Status == model.RuleStatusRunning {
+		if rule.AutoResume {
+			_ = s.ruleRepo.UpdateAutoResume(rule.ID, false)
+		}
 		return nil
 	}
 
@@ -331,6 +334,7 @@ func (s *RuleService) Start(id uint, userID uint, username string, ip, userAgent
 
 	_ = s.ruleRepo.UpdateStatus(rule.ID, model.RuleStatusRunning)
 	_ = s.ruleRepo.UpdateServiceID(rule.ID, strings.Join(serviceIDs, ","))
+	_ = s.ruleRepo.UpdateAutoResume(rule.ID, false)
 
 	s.logService.Record(
 		userID,
@@ -387,6 +391,9 @@ func (s *RuleService) Stop(id uint, userID uint, username string, ip, userAgent 
 	}
 
 	if rule.Status != model.RuleStatusRunning {
+		if rule.AutoResume {
+			_ = s.ruleRepo.UpdateAutoResume(id, false)
+		}
 		return nil
 	}
 
@@ -396,12 +403,14 @@ func (s *RuleService) Stop(id uint, userID uint, username string, ip, userAgent 
 	if err != nil {
 		// 节点不存在，直接更新状态
 		_ = s.ruleRepo.UpdateStatus(id, model.RuleStatusStopped)
+		_ = s.ruleRepo.UpdateAutoResume(id, false)
 		return nil
 	}
 
 	if node.Status == model.NodeStatusOffline {
 		// 节点离线，直接更新状态
 		_ = s.ruleRepo.UpdateStatus(id, model.RuleStatusStopped)
+		_ = s.ruleRepo.UpdateAutoResume(id, false)
 		return nil
 	}
 
@@ -415,6 +424,7 @@ func (s *RuleService) Stop(id uint, userID uint, username string, ip, userAgent 
 	}
 
 	_ = s.ruleRepo.UpdateStatus(id, model.RuleStatusStopped)
+	_ = s.ruleRepo.UpdateAutoResume(id, false)
 	_ = client.SaveConfig()
 
 	s.logService.Record(

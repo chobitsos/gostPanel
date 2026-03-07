@@ -222,6 +222,9 @@ func (s *TunnelService) Start(id uint, userID uint, username string, ip, userAge
 
 	// 已在运行中则跳过
 	if tunnel.Status == model.TunnelStatusRunning {
+		if tunnel.AutoResume {
+			_ = s.tunnelRepo.UpdateAutoResume(tunnel.ID, false)
+		}
 		return nil
 	}
 
@@ -317,6 +320,7 @@ func (s *TunnelService) Start(id uint, userID uint, username string, ip, userAge
 	// 更新隧道状态和服务 ID
 	_ = s.tunnelRepo.UpdateServiceInfo(id, relayServiceName, chainName)
 	_ = s.tunnelRepo.UpdateStatus(id, model.TunnelStatusRunning)
+	_ = s.tunnelRepo.UpdateAutoResume(id, false)
 
 	s.logService.Record(
 		userID,
@@ -342,6 +346,9 @@ func (s *TunnelService) Stop(id uint, userID uint, username string, ip, userAgen
 
 	// 未运行则跳过
 	if tunnel.Status != model.TunnelStatusRunning {
+		if tunnel.AutoResume {
+			_ = s.tunnelRepo.UpdateAutoResume(id, false)
+		}
 		return nil
 	}
 
@@ -369,6 +376,7 @@ func (s *TunnelService) Stop(id uint, userID uint, username string, ip, userAgen
 
 	// 更新状态
 	_ = s.tunnelRepo.UpdateStatus(id, model.TunnelStatusStopped)
+	_ = s.tunnelRepo.UpdateAutoResume(id, false)
 
 	s.logService.Record(
 		userID,
