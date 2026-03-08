@@ -39,17 +39,17 @@
       </div>
 
       <!-- 表格 -->
-      <el-table :data="ruleList" v-loading="loading" style="width: 100%" border>
-        <el-table-column prop="id" label="ID" width="70" align="center" />
-        <el-table-column prop="name" label="规则名" min-width="130" align="center" show-overflow-tooltip />
-        <el-table-column label="类型" width="100" align="center">
+      <el-table :data="ruleList" v-loading="loading" style="width: 100%" border table-layout="auto">
+        <el-table-column v-if="showIdColumn" prop="id" label="ID" width="70" align="center" />
+        <el-table-column prop="name" label="规则名" min-width="140" align="center" show-overflow-tooltip />
+        <el-table-column label="类型" min-width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="row.type === 'tunnel' ? 'warning' : (row.type === 'local_forward' ? 'success' : 'primary')" size="small">
               {{ row.type === 'tunnel' ? '隧道转发' : (row.type === 'local_forward' ? '本地端口转发' : '端口转发') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="入口" width="120" align="center">
+        <el-table-column label="入口" min-width="120" align="center" show-overflow-tooltip>
           <template #default="{ row }">
             <template v-if="row.type === 'tunnel'">
               <el-tag size="small" type="warning">{{ row.tunnel?.entry_node?.name || '-' }}</el-tag>
@@ -59,47 +59,47 @@
             </template>
           </template>
         </el-table-column>
-        <el-table-column label="隧道" width="120" align="center">
+        <el-table-column v-if="showTunnelColumn" label="隧道" min-width="120" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.tunnel" size="small" type="warning">{{ row.tunnel?.name || '-' }}</el-tag>
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="protocol" label="协议" width="80" align="center">
+        <el-table-column prop="protocol" label="协议" min-width="90" align="center">
           <template #default="{ row }">
             <el-tag size="small">{{ (row.protocol || 'tcp').toUpperCase() }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="listen_port" label="监听端口" width="100" align="center" />
-        <el-table-column label="目标地址" min-width="150" align="center" show-overflow-tooltip>
+        <el-table-column prop="listen_port" label="监听端口" min-width="100" align="center" />
+        <el-table-column label="目标地址" min-width="180" align="center" show-overflow-tooltip>
           <template #default="{ row }">
               <span v-if="row.targets && row.targets.length > 0">{{ row.targets[0] }}<span v-if="row.targets.length > 1"> (+{{ row.targets.length - 1 }})</span></span>
               <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="总流量" width="120" align="center">
+        <el-table-column label="总流量" min-width="110" align="center">
           <template #default="{ row }">
             {{ formatBytes(row.total_bytes || 0) }}
           </template>
         </el-table-column>
-        <el-table-column label="上传流量" width="120" align="center">
+        <el-table-column label="上传流量" min-width="110" align="center">
           <template #default="{ row }">
              <span style="color: #67c23a">{{ formatBytes(row.input_bytes || 0) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="下载流量" width="120" align="center">
+        <el-table-column label="下载流量" min-width="110" align="center">
           <template #default="{ row }">
              <span style="color: #409eff">{{ formatBytes(row.output_bytes || 0) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="100" align="center">
+        <el-table-column prop="status" label="状态" min-width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status)" size="small">
               {{ getStatusText(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="240" align="center" fixed="right">
+        <el-table-column label="操作" width="150" align="center" fixed="right" class-name="operation-cell">
           <template #default="{ row }">
             <el-button 
               v-if="row.status !== 'running'" 
@@ -111,9 +111,18 @@
               type="warning" link size="small" 
               @click="handleStop(row)"
             >停止</el-button>
-            <el-button type="primary" link size="small" @click="openDialog(row)">编辑</el-button>
-            <el-button type="info" link size="small" @click="handleCopy(row)">复制</el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <el-dropdown trigger="click" @command="(command) => handleActionCommand(command, row)">
+              <el-button type="primary" link size="small">
+                操作
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="edit">编辑</el-dropdown-item>
+                  <el-dropdown-item command="copy">复制</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -287,6 +296,8 @@ const searchKeyword = ref('')
 const searchNodeId = ref('')
 const searchType = ref('')
 const searchStatus = ref('')
+const showIdColumn = ref(false)
+const showTunnelColumn = ref(false)
 
 // 对话框
 const dialogVisible = ref(false)
@@ -705,6 +716,20 @@ const handleTypeChange = (val) => {
     }
   }
 }
+
+const handleActionCommand = (command, row) => {
+  if (command === 'edit') {
+    openDialog(row)
+    return
+  }
+  if (command === 'copy') {
+    handleCopy(row)
+    return
+  }
+  if (command === 'delete') {
+    handleDelete(row)
+  }
+}
 </script>
 
 <style scoped>
@@ -821,12 +846,12 @@ const handleTypeChange = (val) => {
   
   :deep(.el-table) {
     font-size: 12px;
-    min-width: 500px;
+    min-width: 920px;
   }
 
   
   /* 操作列按钮调整 */
-  :deep(.el-table .cell) {
+  :deep(.operation-cell .cell) {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
