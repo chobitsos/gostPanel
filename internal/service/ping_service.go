@@ -15,25 +15,29 @@ import (
 // NodeHealthService 节点健康检测服务
 // 使用 Gost API 进行健康检查
 type NodeHealthService struct {
-	nodeRepo   *repository.NodeRepository
-	ruleRepo   *repository.RuleRepository
-	tunnelRepo *repository.TunnelRepository
-	ruleSvc    *RuleService
-	tunnelSvc  *TunnelService
-	ticker     *time.Ticker
-	stopChan   chan struct{}
-	wg         sync.WaitGroup
+	nodeRepo    *repository.NodeRepository
+	ruleRepo    *repository.RuleRepository
+	tunnelRepo  *repository.TunnelRepository
+	ruleSvc     *RuleService
+	tunnelSvc   *TunnelService
+	resumeEvery time.Duration
+	lastResume  sync.Map // map[uint]time.Time
+	resumeLocks sync.Map // map[uint]*sync.Mutex
+	ticker      *time.Ticker
+	stopChan    chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewNodeHealthService 创建节点健康检测服务
 func NewNodeHealthService(db *gorm.DB) *NodeHealthService {
 	return &NodeHealthService{
-		nodeRepo:   repository.NewNodeRepository(db),
-		ruleRepo:   repository.NewRuleRepository(db),
-		tunnelRepo: repository.NewTunnelRepository(db),
-		ruleSvc:    NewRuleService(db),
-		tunnelSvc:  NewTunnelService(db),
-		stopChan:   make(chan struct{}),
+		nodeRepo:    repository.NewNodeRepository(db),
+		ruleRepo:    repository.NewRuleRepository(db),
+		tunnelRepo:  repository.NewTunnelRepository(db),
+		ruleSvc:     NewRuleService(db),
+		tunnelSvc:   NewTunnelService(db),
+		resumeEvery: 15 * time.Second,
+		stopChan:    make(chan struct{}),
 	}
 }
 
@@ -99,9 +103,7 @@ func (s *NodeHealthService) checkNodes() {
 
 			if status == model.NodeStatusOnline {
 				logger.Debugf("节点 %s 在线", n.Name)
-				if !wasOnline {
-					s.resumeResourcesForNode(n.ID, n.Name)
-				}
+				s.scheduleResumeForNode(n.ID, n.Name, !wasOnline)
 			} else {
 				// 停止其关联的所有规则和隧道
 				_ = s.ruleRepo.StopByNodeID(n.ID)
@@ -125,8 +127,6 @@ func (s *NodeHealthService) checkNodes() {
 }
 
 func (s *NodeHealthService) resumeResourcesForNode(nodeID uint, nodeName string) {
-	logger.Infof("节点 %s 已恢复在线，开始自动恢复关联隧道和规则", nodeName)
-
 	tunnelsToResume, err := s.tunnelRepo.FindAutoResumeByNodeID(nodeID)
 	if err != nil {
 		logger.Errorf("查询节点 %s 自动恢复隧道失败: %v", nodeName, err)
@@ -159,6 +159,12 @@ func (s *NodeHealthService) resumeResourcesForNode(nodeID uint, nodeName string)
 		return
 	}
 
+	if len(tunnelsToResume) == 0 && len(rulesByNode) == 0 && len(rulesByTunnel) == 0 {
+		return
+	}
+
+	logger.Infof("节点 %s 执行自动恢复: tunnels=%d rules(node)=%d rules(tunnel)=%d", nodeName, len(tunnelsToResume), len(rulesByNode), len(rulesByTunnel))
+
 	ruleIDSet := make(map[uint]struct{})
 	for _, rule := range rulesByNode {
 		ruleIDSet[rule.ID] = struct{}{}
@@ -172,6 +178,48 @@ func (s *NodeHealthService) resumeResourcesForNode(nodeID uint, nodeName string)
 			logger.Warnf("自动恢复规则失败: rule_id=%d err=%v", ruleID, err)
 		}
 	}
+}
+
+func (s *NodeHealthService) scheduleResumeForNode(nodeID uint, nodeName string, force bool) {
+	if !s.shouldResumeNow(nodeID, force) {
+		return
+	}
+
+	lock := s.getResumeLock(nodeID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if !s.shouldResumeNow(nodeID, force) {
+		return
+	}
+	s.lastResume.Store(nodeID, time.Now())
+	s.resumeResourcesForNode(nodeID, nodeName)
+}
+
+func (s *NodeHealthService) shouldResumeNow(nodeID uint, force bool) bool {
+	if force {
+		return true
+	}
+	lastRaw, ok := s.lastResume.Load(nodeID)
+	if !ok {
+		return true
+	}
+	last, ok := lastRaw.(time.Time)
+	if !ok {
+		return true
+	}
+	return time.Since(last) >= s.resumeEvery
+}
+
+func (s *NodeHealthService) getResumeLock(nodeID uint) *sync.Mutex {
+	if lock, ok := s.resumeLocks.Load(nodeID); ok {
+		if m, ok := lock.(*sync.Mutex); ok {
+			return m
+		}
+	}
+	m := &sync.Mutex{}
+	actual, _ := s.resumeLocks.LoadOrStore(nodeID, m)
+	return actual.(*sync.Mutex)
 }
 
 // checkNodeHealth 检查单个节点的健康状态
