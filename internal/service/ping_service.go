@@ -15,29 +15,34 @@ import (
 // NodeHealthService 节点健康检测服务
 // 使用 Gost API 进行健康检查
 type NodeHealthService struct {
-	nodeRepo    *repository.NodeRepository
-	ruleRepo    *repository.RuleRepository
-	tunnelRepo  *repository.TunnelRepository
-	ruleSvc     *RuleService
-	tunnelSvc   *TunnelService
-	resumeEvery time.Duration
-	lastResume  sync.Map // map[uint]time.Time
-	resumeLocks sync.Map // map[uint]*sync.Mutex
-	ticker      *time.Ticker
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
+	nodeRepo         *repository.NodeRepository
+	ruleRepo         *repository.RuleRepository
+	tunnelRepo       *repository.TunnelRepository
+	ruleSvc          *RuleService
+	tunnelSvc        *TunnelService
+	resumeEvery      time.Duration
+	offlineThreshold int
+	lastResume       sync.Map // map[uint]time.Time
+	resumeLocks      sync.Map // map[uint]*sync.Mutex
+	failureMu        sync.Mutex
+	failures         map[uint]int
+	ticker           *time.Ticker
+	stopChan         chan struct{}
+	wg               sync.WaitGroup
 }
 
 // NewNodeHealthService 创建节点健康检测服务
 func NewNodeHealthService(db *gorm.DB) *NodeHealthService {
 	return &NodeHealthService{
-		nodeRepo:    repository.NewNodeRepository(db),
-		ruleRepo:    repository.NewRuleRepository(db),
-		tunnelRepo:  repository.NewTunnelRepository(db),
-		ruleSvc:     NewRuleService(db),
-		tunnelSvc:   NewTunnelService(db),
-		resumeEvery: 15 * time.Second,
-		stopChan:    make(chan struct{}),
+		nodeRepo:         repository.NewNodeRepository(db),
+		ruleRepo:         repository.NewRuleRepository(db),
+		tunnelRepo:       repository.NewTunnelRepository(db),
+		ruleSvc:          NewRuleService(db),
+		tunnelSvc:        NewTunnelService(db),
+		resumeEvery:      5 * time.Second,
+		offlineThreshold: 2,
+		failures:         make(map[uint]int),
+		stopChan:         make(chan struct{}),
 	}
 }
 
@@ -92,6 +97,17 @@ func (s *NodeHealthService) checkNodes() {
 		go func(n model.GostNode) {
 			status := s.checkNodeHealth(n)
 			wasOnline := n.Status == model.NodeStatusOnline
+
+			// 在线 -> 离线采用连续失败阈值，降低网络抖动误判
+			if status == model.NodeStatusOffline {
+				failCount := s.increaseFailure(n.ID)
+				if wasOnline && failCount < s.offlineThreshold {
+					logger.Debugf("节点 %s 健康检查失败(%d/%d)，暂不判定离线", n.Name, failCount, s.offlineThreshold)
+					status = model.NodeStatusOnline
+				}
+			} else {
+				s.resetFailure(n.ID)
+			}
 
 			// 状态变更处理
 			if status != n.Status {
@@ -220,6 +236,19 @@ func (s *NodeHealthService) getResumeLock(nodeID uint) *sync.Mutex {
 	m := &sync.Mutex{}
 	actual, _ := s.resumeLocks.LoadOrStore(nodeID, m)
 	return actual.(*sync.Mutex)
+}
+
+func (s *NodeHealthService) increaseFailure(nodeID uint) int {
+	s.failureMu.Lock()
+	defer s.failureMu.Unlock()
+	s.failures[nodeID]++
+	return s.failures[nodeID]
+}
+
+func (s *NodeHealthService) resetFailure(nodeID uint) {
+	s.failureMu.Lock()
+	defer s.failureMu.Unlock()
+	delete(s.failures, nodeID)
 }
 
 // checkNodeHealth 检查单个节点的健康状态

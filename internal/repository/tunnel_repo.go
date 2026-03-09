@@ -145,3 +145,17 @@ func (r *TunnelRepository) FindAutoResumeByNodeID(nodeID uint) ([]model.GostTunn
 func (r *TunnelRepository) UpdateAutoResume(id uint, autoResume bool) error {
 	return r.UpdateField(&model.GostTunnel{}, id, "auto_resume", autoResume)
 }
+
+// MarkStoppedForAutoResumeIfRunning 将 running 隧道原子标记为 stopped + auto_resume
+func (r *TunnelRepository) MarkStoppedForAutoResumeIfRunning(id uint) (bool, error) {
+	res := r.DB.Model(&model.GostTunnel{}).
+		Where("id = ? AND status = ?", id, model.TunnelStatusRunning).
+		Updates(map[string]any{
+			"status":      model.TunnelStatusStopped,
+			"auto_resume": true,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}

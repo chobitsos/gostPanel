@@ -212,3 +212,17 @@ func (r *RuleRepository) FindAutoResumeByTunnelIDs(tunnelIDs []uint) ([]model.Go
 func (r *RuleRepository) UpdateAutoResume(id uint, autoResume bool) error {
 	return r.UpdateField(&model.GostRule{}, id, "auto_resume", autoResume)
 }
+
+// MarkStoppedForAutoResumeIfRunning 将 running 规则原子标记为 stopped + auto_resume
+func (r *RuleRepository) MarkStoppedForAutoResumeIfRunning(id uint) (bool, error) {
+	res := r.DB.Model(&model.GostRule{}).
+		Where("id = ? AND status = ?", id, model.RuleStatusRunning).
+		Updates(map[string]any{
+			"status":      model.RuleStatusStopped,
+			"auto_resume": true,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}

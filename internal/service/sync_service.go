@@ -163,7 +163,11 @@ func (s *RuleSyncService) syncRuleStatus(r model.GostRule, serviceStates map[str
 		}
 		if r.Status != newStatus {
 			logger.Infof("[Sync] rule %d (%s) status changed: %s -> %s (service_ids=%s)", r.ID, r.Name, r.Status, newStatus, strings.Join(serviceIDs, ","))
-			_ = s.ruleRepo.UpdateStatus(r.ID, newStatus)
+			if r.Status == model.RuleStatusRunning && newStatus == model.RuleStatusStopped {
+				_, _ = s.ruleRepo.MarkStoppedForAutoResumeIfRunning(r.ID)
+			} else {
+				_ = s.ruleRepo.UpdateStatus(r.ID, newStatus)
+			}
 		}
 		if newStatus == model.RuleStatusRunning && r.AutoResume {
 			_ = s.ruleRepo.UpdateAutoResume(r.ID, false)
@@ -182,7 +186,11 @@ func (s *RuleSyncService) syncRuleStatus(r model.GostRule, serviceStates map[str
 	// 如果状态不一致
 	if r.Status != newStatus {
 		logger.Infof("[Sync] 规则 %d (%s) 状态变更: %s -> %s (Gost State: %s)", r.ID, r.Name, r.Status, newStatus, state)
-		_ = s.ruleRepo.UpdateStatus(r.ID, newStatus)
+		if r.Status == model.RuleStatusRunning && newStatus == model.RuleStatusStopped {
+			_, _ = s.ruleRepo.MarkStoppedForAutoResumeIfRunning(r.ID)
+		} else {
+			_ = s.ruleRepo.UpdateStatus(r.ID, newStatus)
+		}
 	}
 	if newStatus == model.RuleStatusRunning && r.AutoResume {
 		_ = s.ruleRepo.UpdateAutoResume(r.ID, false)
@@ -207,7 +215,11 @@ func (s *RuleSyncService) syncTunnelStatus(t model.GostTunnel, chainStates map[s
 
 	if t.Status != newStatus {
 		logger.Infof("[Sync] 隧道 %d (%s) 状态变更: %s -> %s (Chain Exists: %v)", t.ID, t.Name, t.Status, newStatus, exists)
-		_ = s.tunnelRepo.UpdateStatus(t.ID, newStatus)
+		if t.Status == model.TunnelStatusRunning && newStatus == model.TunnelStatusStopped {
+			_, _ = s.tunnelRepo.MarkStoppedForAutoResumeIfRunning(t.ID)
+		} else {
+			_ = s.tunnelRepo.UpdateStatus(t.ID, newStatus)
+		}
 	}
 	if newStatus == model.TunnelStatusRunning && t.AutoResume {
 		_ = s.tunnelRepo.UpdateAutoResume(t.ID, false)
